@@ -140,16 +140,16 @@ type PageInfo struct {
 	OverflowCount int
 }
 
+// 页id
 type pgids []pgid
 
 func (s pgids) Len() int           { return len(s) }
 func (s pgids) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 func (s pgids) Less(i, j int) bool { return s[i] < s[j] }
 
-// merge returns the sorted union of a and b.
-// 返回a和b
+// 将a和b用排序联合（sorted union）进行合并
 func (a pgids) merge(b pgids) pgids {
-	// Return the opposite slice if one is nil.
+	// 如果其中是nil，就返回另外一个
 	if len(a) == 0 {
 		return b
 	}
@@ -161,13 +161,13 @@ func (a pgids) merge(b pgids) pgids {
 	return merged
 }
 
-// mergepgids copies the sorted union of a and b into dst.
-// If dst is too small, it panics.
+// 拷贝a和b的排序联合到dst中
+// 如果dst大小太小，将会报错
 func mergepgids(dst, a, b pgids) {
 	if len(dst) < len(a)+len(b) {
 		panic(fmt.Errorf("mergepgids bad len %d < %d + %d", len(dst), len(a), len(b)))
 	}
-	// Copy in the opposite slice if one is nil.
+	// 如果其中是nil，就拷贝另外一个
 	if len(a) == 0 {
 		copy(dst, b)
 		return
