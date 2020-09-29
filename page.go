@@ -177,28 +177,28 @@ func mergepgids(dst, a, b pgids) {
 		return
 	}
 
-	// Merged will hold all elements from both lists.
+	// merged包含两个列表的所有元素
 	merged := dst[:0]
 
-	// Assign lead to the slice with a lower starting value, follow to the higher value.
+	// 用更小的开始值赋值给lead，而follow持有更大的开始值
 	lead, follow := a, b
 	if b[0] < a[0] {
 		lead, follow = b, a
 	}
 
-	// Continue while there are elements in the lead.
+	// 只要lead有值就一直循环下去
 	for len(lead) > 0 {
-		// Merge largest prefix of lead that is ahead of follow[0].
+		// 把lead里面小于follow[0]的值放到merged里面
 		n := sort.Search(len(lead), func(i int) bool { return lead[i] > follow[0] })
 		merged = append(merged, lead[:n]...)
 		if n >= len(lead) {
 			break
 		}
 
-		// Swap lead and follow.
+		// 交换lead和follow
 		lead, follow = follow, lead[n:]
 	}
 
-	// Append what's left in follow.
+	// 添加follow里面剩下的值到merged
 	_ = append(merged, follow...)
 }
