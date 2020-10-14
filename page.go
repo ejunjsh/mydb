@@ -32,7 +32,7 @@ const (
 
 type pgid uint64
 
-// 直接映射到内存的页
+// 直接映射到磁盘的页
 type page struct {
 	id       pgid
 	flags    uint16

@@ -7,7 +7,7 @@ import (
 	"unsafe"
 )
 
-// 表示一个在内存的反序列化的页
+// 表示一个存在内存中的对页（page）反序列化后的数据结构
 type node struct {
 	bucket     *Bucket
 	isLeaf     bool
@@ -267,14 +267,14 @@ func (n *node) split(pageSize int) []*node {
 
 // 拆分一个节点为两个更小的节点，这个方法只会被split()函数调用
 func (n *node) splitTwo(pageSize int) (*node, *node) {
-	// Ignore the split if the page doesn't have at least enough nodes for
-	// two pages or if the nodes can fit in a single page.
-	// 如果
+	// 如果节点里面的inode数量不满足至少两个页应该有的数量
+	// 或者这个节点大小小于页大小
+	// 就返回，不拆分了
 	if len(n.inodes) <= (minKeysPerPage*2) || n.sizeLessThan(pageSize) {
 		return n, nil
 	}
 
-	// Determine the threshold before starting a new node.
+	// 拆分前先确定拆分的阀值
 	var fillPercent = n.bucket.FillPercent
 	if fillPercent < minFillPercent {
 		fillPercent = minFillPercent
@@ -283,24 +283,24 @@ func (n *node) splitTwo(pageSize int) (*node, *node) {
 	}
 	threshold := int(float64(pageSize) * fillPercent)
 
-	// Determine split position and sizes of the two pages.
+	// 确定拆分的位置
 	splitIndex, _ := n.splitIndex(threshold)
 
-	// Split node into two separate nodes.
-	// If there's no parent then we'll need to create one.
+	// 拆分成两个节点
+	// 如果没有父节点，就创建一个
 	if n.parent == nil {
 		n.parent = &node{bucket: n.bucket, children: []*node{n}}
 	}
 
-	// Create a new node and add it to the parent.
+	// 创建一个新的节点并把它加到父节点
 	next := &node{bucket: n.bucket, isLeaf: n.isLeaf, parent: n.parent}
 	n.parent.children = append(n.parent.children, next)
 
-	// Split inodes across two nodes.
+	// 拆开inodes分到两个节点上
 	next.inodes = n.inodes[splitIndex:]
 	n.inodes = n.inodes[:splitIndex]
 
-	// Update the statistics.
+	// 更新统计信息
 	n.bucket.tx.stats.Split++
 
 	return n, next
