@@ -9,8 +9,8 @@ import (
 // 表示一批可用来分配的空闲页
 // 它也用来跟踪那些虽然已经释放但是还在被其他打开事务使用的页
 type freelist struct {
-	ids     []pgid          // 所有空闲可用的页id
-	pending map[txid][]pgid // 空闲但是还被事务使用的挂起页id
+	ids     []pgid          // 包含所有空闲可用的页id
+	pending map[txid][]pgid // 包含空闲但是还被事务使用的挂起页id
 	cache   map[pgid]bool   // 用来快速查找空闲和挂起页id是否在空闲列表里的缓存
 }
 
@@ -62,30 +62,29 @@ func (f *freelist) copyall(dst []pgid) {
 	mergepgids(dst, f.ids, m)
 }
 
-// allocate returns the starting page id of a contiguous list of pages of a given size.
-// If a contiguous block cannot be found then 0 is returned.
+// 返回n个连续页组成的块的开始页id
+// 如果分配不到就返回0
 func (f *freelist) allocate(n int) pgid {
 	if len(f.ids) == 0 {
 		return 0
 	}
 
 	var initial, previd pgid
+	// 遍历
 	for i, id := range f.ids {
 		if id <= 1 {
 			panic(fmt.Sprintf("invalid page allocation: %d", id))
 		}
 
-		// Reset initial page if this is not contiguous.
+		// 如果不连续就重置下开始的页id
 		if previd == 0 || id-previd != 1 {
 			initial = id
 		}
 
-		// If we found a contiguous block then remove it and return it.
+		// 如果找到一个连续页的块，然后移除它再返回它的开始id
 		if (id-initial)+1 == pgid(n) {
-			// If we're allocating off the beginning then take the fast path
-			// and just adjust the existing slice. This will use extra memory
-			// temporarily but the append() in free() will realloc the slice
-			// as is necessary.
+			// 如果前面几个页就是连续的，那就直接slice操作就可以移除它
+			// 如果不是，则就要把后面的填到前面去把那部分连续页占的空间填好
 			if (i + 1) == n {
 				f.ids = f.ids[i+1:]
 			} else {
@@ -93,7 +92,7 @@ func (f *freelist) allocate(n int) pgid {
 				f.ids = f.ids[:len(f.ids)-n]
 			}
 
-			// Remove from the free cache.
+			// 从缓存中移除
 			for i := pgid(0); i < pgid(n); i++ {
 				delete(f.cache, initial+i)
 			}
@@ -106,35 +105,35 @@ func (f *freelist) allocate(n int) pgid {
 	return 0
 }
 
-// free releases a page and its overflow for a given transaction id.
-// If the page is already free then a panic will occur.
+// 释放页和它对应溢出的那部分页，这个不会直接释放到空闲，而是放到挂起那里，所以需要一个事务txid关联
+// 如果页已经是空闲，会抛panic
 func (f *freelist) free(txid txid, p *page) {
 	if p.id <= 1 {
 		panic(fmt.Sprintf("cannot free page 0 or 1: %d", p.id))
 	}
 
-	// Free page and all its overflow pages.
+	// 释放页和它对应溢出的那部分页
 	var ids = f.pending[txid]
 	for id := p.id; id <= p.id+pgid(p.overflow); id++ {
-		// Verify that page is not already free.
+		// 验证这个页是否已经释放了
 		if f.cache[id] {
 			panic(fmt.Sprintf("page %d already freed", id))
 		}
 
-		// Add to the freelist and cache.
+		// 加到挂起列表和缓存里面
 		ids = append(ids, id)
 		f.cache[id] = true
 	}
 	f.pending[txid] = ids
 }
 
-// release moves all page ids for a transaction id (or older) to the freelist.
+// 释放某个事务和它之前的挂起的空闲页
 func (f *freelist) release(txid txid) {
 	m := make(pgids, 0)
 	for tid, ids := range f.pending {
 		if tid <= txid {
-			// Move transaction's pending pages to the available freelist.
-			// Don't remove from the cache since the page is still free.
+			// 把挂起页回收到可用列表里面
+			// 缓存不用删掉，因为本来就是空闲的
 			m = append(m, ids...)
 			delete(f.pending, tid)
 		}
@@ -143,33 +142,32 @@ func (f *freelist) release(txid txid) {
 	f.ids = pgids(f.ids).merge(m)
 }
 
-// rollback removes the pages from a given pending tx.
+// 从某个事务中移除挂起的页
 func (f *freelist) rollback(txid txid) {
-	// Remove page ids from cache.
+	// 移除缓存
 	for _, id := range f.pending[txid] {
 		delete(f.cache, id)
 	}
 
-	// Remove pages from pending list.
+	// 从挂起列表移除页
 	delete(f.pending, txid)
 }
 
-// freed returns whether a given page is in the free list.
+// 返回页是否是在空闲列表里（在挂起列表也算是）
 func (f *freelist) freed(pgid pgid) bool {
 	return f.cache[pgid]
 }
 
 // 从一个空闲列表页里面初始化一个空闲列表
 func (f *freelist) read(p *page) {
-	// If the page.count is at the max uint16 value (64k) then it's considered
-	// an overflow and the size of the freelist is stored as the first element.
+	// 如果page.count是大于64k，那空闲列表的数量是放在页的第一个元素里面
 	idx, count := 0, int(p.count)
 	if count == 0xFFFF {
 		idx = 1
-		count = int(((*[maxAllocSize]pgid)(unsafe.Pointer(&p.ptr)))[0])
+		count = int(((*[maxAllocSize]pgid)(unsafe.Pointer(&p.ptr)))[0]) // 第一个元素
 	}
 
-	// Copy the list of page ids from the freelist.
+	// 从页里面拷贝到空闲列表里面
 	if count == 0 {
 		f.ids = nil
 	} else {
@@ -177,7 +175,7 @@ func (f *freelist) read(p *page) {
 		f.ids = make([]pgid, len(ids))
 		copy(f.ids, ids)
 
-		// Make sure they're sorted.
+		// 保证是排序的
 		sort.Sort(pgids(f.ids))
 	}
 
@@ -185,17 +183,14 @@ func (f *freelist) read(p *page) {
 	f.reindex()
 }
 
-// write writes the page ids onto a freelist page. All free and pending ids are
-// saved to disk since in the event of a program crash, all pending ids will
-// become free.
+// 把空闲列表写到空闲列表类型的页中，包括空闲和挂起的都写到磁盘里面，一般发生在程序错误退出
+// 这样的话，表示所有挂起的页变成可用的了
 func (f *freelist) write(p *page) error {
-	// Combine the old free pgids and pgids waiting on an open transaction.
 
-	// Update the header flag.
+	// 设置类型为空闲列表
 	p.flags |= freelistPageFlag
 
-	// The page.count can only hold up to 64k elements so if we overflow that
-	// number then we handle it by putting the size in the first element.
+	// page.count只能小于或等于64k，如果大于，则放在页里面的第一个元素里面
 	lenids := f.count()
 	if lenids == 0 {
 		p.count = uint16(lenids)
@@ -204,7 +199,7 @@ func (f *freelist) write(p *page) error {
 		f.copyall(((*[maxAllocSize]pgid)(unsafe.Pointer(&p.ptr)))[:])
 	} else {
 		p.count = 0xFFFF
-		((*[maxAllocSize]pgid)(unsafe.Pointer(&p.ptr)))[0] = pgid(lenids)
+		((*[maxAllocSize]pgid)(unsafe.Pointer(&p.ptr)))[0] = pgid(lenids) // 设置到第一个元素
 		f.copyall(((*[maxAllocSize]pgid)(unsafe.Pointer(&p.ptr)))[1:])
 	}
 
@@ -213,9 +208,10 @@ func (f *freelist) write(p *page) error {
 
 // 在页里面重新构造空闲列表并排除那些挂起的页
 func (f *freelist) reload(p *page) {
+	// 先从页里面读入
 	f.read(p)
 
-	// Build a cache of only pending pages.
+	// 为挂起的页创建缓存
 	pcache := make(map[pgid]bool)
 	for _, pendingIDs := range f.pending {
 		for _, pendingID := range pendingIDs {
@@ -223,18 +219,16 @@ func (f *freelist) reload(p *page) {
 		}
 	}
 
-	// Check each page in the freelist and build a new available freelist
-	// with any pages not in the pending lists.
+	// 检查每个在空闲列表（可用）的页，筛选出不在挂起的页，放到一个新的可用列表
 	var a []pgid
 	for _, id := range f.ids {
 		if !pcache[id] {
 			a = append(a, id)
 		}
 	}
-	f.ids = a
+	f.ids = a // 替换掉原来那个
 
-	// Once the available list is rebuilt then rebuild the free cache so that
-	// it includes the available and pending free pages.
+	// 一旦可用列表更新，重建缓存，这样缓存就包含最新的可用和挂起的页
 	f.reindex()
 }
 

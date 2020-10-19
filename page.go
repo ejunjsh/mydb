@@ -18,7 +18,7 @@ const branchPageElementSize = int(unsafe.Sizeof(branchPageElement{}))
 // 叶子页元素数量
 const leafPageElementSize = int(unsafe.Sizeof(leafPageElement{}))
 
-// 标志
+// 页类型
 const (
 	branchPageFlag   = 0x01 // 分支页
 	leafPageFlag     = 0x02 // 叶子页
