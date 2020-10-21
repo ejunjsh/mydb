@@ -138,7 +138,7 @@ func (c *Cursor) Delete() error {
 	}
 
 	key, _, flags := c.keyValue()
-	// Return an error if current value is a bucket.
+	// 如果当前值是个桶，就返回错误
 	if (flags & bucketLeafFlag) != 0 {
 		return ErrIncompatibleValue
 	}
@@ -334,34 +334,34 @@ func (c *Cursor) nsearch(key []byte) {
 	e.index = index
 }
 
-// keyValue returns the key and value of the current leaf element.
+// 返回当前叶子的key和value
 func (c *Cursor) keyValue() ([]byte, []byte, uint32) {
 	ref := &c.stack[len(c.stack)-1]
 	if ref.count() == 0 || ref.index >= ref.count() {
 		return nil, nil, 0
 	}
 
-	// Retrieve value from node.
+	// 从节点拿值
 	if ref.node != nil {
 		inode := &ref.node.inodes[ref.index]
 		return inode.key, inode.value, inode.flags
 	}
 
-	// Or retrieve value from page.
+	// 或者从页拿值
 	elem := ref.page.leafPageElement(uint16(ref.index))
 	return elem.key(), elem.value(), elem.flags
 }
 
-// node returns the node that the cursor is currently positioned on.
+// 返回当前游标所在的节点
 func (c *Cursor) node() *node {
 	_assert(len(c.stack) > 0, "accessing a node with a zero-length cursor stack")
 
-	// If the top of the stack is a leaf node then just return it.
+	// 如果栈顶是叶子节点，就返回它
 	if ref := &c.stack[len(c.stack)-1]; ref.node != nil && ref.isLeaf() {
 		return ref.node
 	}
 
-	// Start from root and traverse down the hierarchy.
+	// 从根开始遍历下去，一直到底
 	var n = c.stack[0].node
 	if n == nil {
 		n = c.bucket.node(c.stack[0].page.id, nil)
