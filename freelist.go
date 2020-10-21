@@ -6,12 +6,12 @@ import (
 	"unsafe"
 )
 
-// 表示一批可用来分配的空闲页
+// 空闲列表，表示一批可用来分配的空闲页
 // 它也用来跟踪那些虽然已经释放但是还在被其他打开事务使用的页
 type freelist struct {
 	ids     []pgid          // 包含所有空闲可用的页id
 	pending map[txid][]pgid // 包含空闲但是还被事务使用的挂起页id
-	cache   map[pgid]bool   // 用来快速查找空闲和挂起页id是否在空闲列表里的缓存
+	cache   map[pgid]bool   // 用来快速查找id是否在空闲列表里的缓存（如果页id可用或挂起都返回true）
 }
 
 // 返回一个空的并且初始化的空闲列表
