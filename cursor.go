@@ -64,7 +64,7 @@ func (c *Cursor) Last() (key []byte, value []byte) {
 	return k, v
 }
 
-// 移动游标到桶里的下一个元素并返回key和value
+// 移动游标到下一个元素并返回key和value
 // 如果游标已经在桶的底部了，则返回nil
 // 这返回的key和value只在当前事务有效
 func (c *Cursor) Next() (key []byte, value []byte) {
@@ -76,7 +76,7 @@ func (c *Cursor) Next() (key []byte, value []byte) {
 	return k, v
 }
 
-// 移动游标到桶里的前一个元素并返回key和value
+// 移动游标到前一个元素并返回key和value
 // 如果游标已经在桶的开始，则返回nil
 // 这返回的key和value只在当前事务有效
 func (c *Cursor) Prev() (key []byte, value []byte) {
@@ -99,7 +99,7 @@ func (c *Cursor) Prev() (key []byte, value []byte) {
 		return nil, nil
 	}
 
-	// Move down the stack to find the last element of the last leaf under this branch.
+	// 向下移动栈去找当前分支下的最后一个叶子的最后一个元素，看不懂直接看last()方法吧
 	c.last()
 	k, v, flags := c.keyValue()
 	if (flags & uint32(bucketLeafFlag)) != 0 {
@@ -247,7 +247,7 @@ func (c *Cursor) next() (key []byte, value []byte, flags uint32) {
 	}
 }
 
-// search recursively performs a binary search against a given page/node until it finds a given key.
+// 递归的在给定的页或节点里面进行二分查找某个键
 func (c *Cursor) search(key []byte, pgid pgid) {
 	p, n := c.bucket.pageNode(pgid)
 	if p != nil && (p.flags&(branchPageFlag|leafPageFlag)) == 0 {
@@ -256,24 +256,25 @@ func (c *Cursor) search(key []byte, pgid pgid) {
 	e := elemRef{page: p, node: n}
 	c.stack = append(c.stack, e)
 
-	// If we're on a leaf page/node then find the specific node.
+	// 如果我们正在叶子页/节点，直接在叶子上面查找
 	if e.isLeaf() {
 		c.nsearch(key)
 		return
 	}
 
+	//如果节点已经初始化，节点上查找
 	if n != nil {
 		c.searchNode(key, n)
 		return
 	}
+	// 页上查
 	c.searchPage(key, p)
 }
 
+// 节点搜索
 func (c *Cursor) searchNode(key []byte, n *node) {
 	var exact bool
 	index := sort.Search(len(n.inodes), func(i int) bool {
-		// TODO(benbjohnson): Optimize this range search. It's a bit hacky right now.
-		// sort.Search() finds the lowest index where f() != -1 but we need the highest index.
 		ret := bytes.Compare(n.inodes[i].key, key)
 		if ret == 0 {
 			exact = true
@@ -285,18 +286,17 @@ func (c *Cursor) searchNode(key []byte, n *node) {
 	}
 	c.stack[len(c.stack)-1].index = index
 
-	// Recursively search to the next page.
+	// 递归查找下一个页
 	c.search(key, n.inodes[index].pgid)
 }
 
+// 页中搜索
 func (c *Cursor) searchPage(key []byte, p *page) {
 	// Binary search for the correct range.
 	inodes := p.branchPageElements()
 
 	var exact bool
 	index := sort.Search(int(p.count), func(i int) bool {
-		// TODO(benbjohnson): Optimize this range search. It's a bit hacky right now.
-		// sort.Search() finds the lowest index where f() != -1 but we need the highest index.
 		ret := bytes.Compare(inodes[i].key(), key)
 		if ret == 0 {
 			exact = true
@@ -308,16 +308,16 @@ func (c *Cursor) searchPage(key []byte, p *page) {
 	}
 	c.stack[len(c.stack)-1].index = index
 
-	// Recursively search to the next page.
+	// 递归查找下一个页
 	c.search(key, inodes[index].pgid)
 }
 
-// nsearch searches the leaf node on the top of the stack for a key.
+// 在栈顶的叶子节点中查找key
 func (c *Cursor) nsearch(key []byte) {
 	e := &c.stack[len(c.stack)-1]
 	p, n := e.page, e.node
 
-	// If we have a node then search its inodes.
+	// 如果节点有就查找inode
 	if n != nil {
 		index := sort.Search(len(n.inodes), func(i int) bool {
 			return bytes.Compare(n.inodes[i].key, key) != -1
@@ -326,7 +326,7 @@ func (c *Cursor) nsearch(key []byte) {
 		return
 	}
 
-	// If we have a page then search its leaf elements.
+	// 如果页有（肯定有），则查找叶子元素
 	inodes := p.leafPageElements()
 	index := sort.Search(int(p.count), func(i int) bool {
 		return bytes.Compare(inodes[i].key(), key) != -1
@@ -334,7 +334,7 @@ func (c *Cursor) nsearch(key []byte) {
 	e.index = index
 }
 
-// 返回当前叶子的key和value
+// 返回当前叶子的键和值
 func (c *Cursor) keyValue() ([]byte, []byte, uint32) {
 	ref := &c.stack[len(c.stack)-1]
 	if ref.count() == 0 || ref.index >= ref.count() {
