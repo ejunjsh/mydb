@@ -306,33 +306,31 @@ func (n *node) splitTwo(pageSize int) (*node, *node) {
 	return n, next
 }
 
-// splitIndex finds the position where a page will fill a given threshold.
-// It returns the index as well as the size of the first page.
-// This is only be called from split().
+// 根据阀值去找拆分的位置，并返回位置的索引和跟阀值相关的大小
+// 这个方法只会被splitTwo()函数调用
 func (n *node) splitIndex(threshold int) (index, sz int) {
-	sz = pageHeaderSize
+	sz = pageHeaderSize // 初始化总大小
 
-	// Loop until we only have the minimum number of keys required for the second page.
+	// 循环直到留下最少数量的key能够满足给第二个页时
 	for i := 0; i < len(n.inodes)-minKeysPerPage; i++ {
 		index = i
 		inode := n.inodes[i]
 		elsize := n.pageElementSize() + len(inode.key) + len(inode.value)
 
-		// If we have at least the minimum number of keys and adding another
-		// node would put us over the threshold then exit and return.
+		// 如果有足够的key，同时节点加起来的总大小大于阀值的话就返回当前索引
 		if i >= minKeysPerPage && sz+elsize > threshold {
 			break
 		}
 
-		// Add the element size to the total size.
+		// 累加总大小
 		sz += elsize
 	}
 
 	return
 }
 
-// spill writes the nodes to dirty pages and splits nodes as it goes.
-// Returns an error if dirty pages cannot be allocated.
+// 写节点到脏页同时拆分节点
+// 如果脏页没法分配就返回错误
 func (n *node) spill() error {
 	var tx = n.bucket.tx
 	if n.spilled {
@@ -349,7 +347,7 @@ func (n *node) spill() error {
 		}
 	}
 
-	// We no longer need the child list because it's only used for spill tracking.
+	// 我们不再需要这个属性因为它只是用来跟踪
 	n.children = nil
 
 	// Split nodes into appropriate sizes. The first node will always be n.
