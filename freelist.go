@@ -22,7 +22,7 @@ func newFreelist() *freelist {
 	}
 }
 
-// 返回序列化后的页大小
+// 返回空闲列表序列化后占用的页大小
 func (f *freelist) size() int {
 	n := f.count()
 	if n >= 0xFFFF {

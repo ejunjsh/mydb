@@ -34,11 +34,11 @@ type pgid uint64
 
 // 直接映射到磁盘的页
 type page struct {
-	id       pgid
-	flags    uint16
-	count    uint16
-	overflow uint32
-	ptr      uintptr
+	id       pgid // 页id
+	flags    uint16 // 页类型
+	count    uint16 // 页里面包含多少元素
+	overflow uint32 // 页是否跨页
+	ptr      uintptr // 指向第一个元素的指针
 }
 
 // 返回页类型
