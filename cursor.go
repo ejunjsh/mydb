@@ -108,14 +108,13 @@ func (c *Cursor) Prev() (key []byte, value []byte) {
 	return k, v
 }
 
-// Seek moves the cursor to a given key and returns it.
-// If the key does not exist then the next key is used. If no keys
-// follow, a nil key is returned.
-// The returned key and value are only valid for the life of the transaction.
+// 移动游标到给定的键所在的位置并返回它
+// 如果这个键不存在，那返回它下一个键，如果也没有就返回nil
+// 这返回的键值只在当前事务有效
 func (c *Cursor) Seek(seek []byte) (key []byte, value []byte) {
 	k, v, flags := c.seek(seek)
 
-	// If we ended up after the last element of a page then move to the next one.
+	// 如果游标在一个页的最后一个元素那里停住了，就移动到相邻的下一个页
 	if ref := &c.stack[len(c.stack)-1]; ref.index >= ref.count() {
 		k, v, flags = c.next()
 	}
@@ -128,12 +127,12 @@ func (c *Cursor) Seek(seek []byte) (key []byte, value []byte) {
 	return k, v
 }
 
-// Delete removes the current key/value under the cursor from the bucket.
-// Delete fails if current key/value is a bucket or if the transaction is not writable.
+// 从桶中移除当前游标所在的键值
+// 如果删除的是个桶或者事务只读的时候会删除失败
 func (c *Cursor) Delete() error {
 	if c.bucket.tx.db == nil {
 		return ErrTxClosed
-	} else if !c.bucket.Writable() {
+	} else if !c.bucket.Writable() { // 只读事务，返回错误
 		return ErrTxNotWritable
 	}
 
@@ -147,35 +146,35 @@ func (c *Cursor) Delete() error {
 	return nil
 }
 
-// seek moves the cursor to a given key and returns it.
-// If the key does not exist then the next key is used.
+// 移动游标到给定的键所在的位置并返回它
+// 如果这个键不存在，那返回它下一个键
 func (c *Cursor) seek(seek []byte) (key []byte, value []byte, flags uint32) {
 	_assert(c.bucket.tx.db != nil, "tx closed")
 
-	// Start from root page/node and traverse to correct page.
+	// 从根页/节点开始遍历，直到找到正确的位置
 	c.stack = c.stack[:0]
 	c.search(seek, c.bucket.root)
 	ref := &c.stack[len(c.stack)-1]
 
-	// If the cursor is pointing to the end of page/node then return nil.
+	// 如果游标指向页/节点的结尾，则返回nil
 	if ref.index >= ref.count() {
 		return nil, nil, 0
 	}
 
-	// If this is a bucket then return a nil value.
+	// 如果桶页，则会返回nil值
 	return c.keyValue()
 }
 
-// first moves the cursor to the first leaf element under the last page in the stack.
+// 移动游标到栈顶上的页的第一个叶子元素
 func (c *Cursor) first() {
 	for {
-		// Exit when we hit a leaf page.
+		// 如果是个叶子页，退出循环
 		var ref = &c.stack[len(c.stack)-1]
 		if ref.isLeaf() {
 			break
 		}
 
-		// Keep adding pages pointing to the first element to the stack.
+		// 不断将指向第一个元素的页压入栈中
 		var pgid pgid
 		if ref.node != nil {
 			pgid = ref.node.inodes[ref.index].pgid
@@ -187,7 +186,7 @@ func (c *Cursor) first() {
 	}
 }
 
-// last moves the cursor to the last leaf element under the last page in the stack.
+// 移动游标到栈顶上的页的最后一个叶子元素
 func (c *Cursor) last() {
 	for {
 		// 如果是个叶子页，退出循环
@@ -196,7 +195,7 @@ func (c *Cursor) last() {
 			break
 		}
 
-		// Keep adding pages pointing to the last element in the stack.
+		// 不断将指向最后一个元素的页压入栈中
 		var pgid pgid
 		if ref.node != nil {
 			pgid = ref.node.inodes[ref.index].pgid
