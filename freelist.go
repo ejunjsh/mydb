@@ -1,4 +1,4 @@
-package bolt
+package mydb
 
 import (
 	"fmt"
