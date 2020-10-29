@@ -6,7 +6,7 @@ import (
 	"sort"
 )
 
-// 游标用来有序的遍历一个桶里面所有的key/value，
+// Cursor （游标）用来有序的遍历一个桶里面所有的key/value，
 // 游标看到桶类型的页时返回的value是nil
 // 游标从一个事务中获得，而且只在这个事务中有效
 // 同理游标返回的key/value也是只在当前事务中有效
@@ -14,7 +14,7 @@ import (
 // 并返回不符合期望的key/value。在改变数据之后，你必须重置你的游标
 type Cursor struct {
 	bucket *Bucket // 创建游标的桶
-	stack  []elemRef // 游标经历过的元素都要放到这个栈中
+	stack  []elemRef // 游标遍历桶的元素都要放到这个栈中，栈的索引表示在桶（b+树）的哪一层
 }
 
 // 返回创建游标的桶
@@ -210,33 +210,35 @@ func (c *Cursor) last() {
 	}
 }
 
-// next moves to the next leaf element and returns the key and value.
-// If the cursor is at the last leaf element then it stays there and returns nil.
+// 返回当前游标所在的叶子元素的下一个元素的键值
+// 如果是最后一个元素，那游标就呆在原地并返回nil
 func (c *Cursor) next() (key []byte, value []byte, flags uint32) {
 	for {
-		// Attempt to move over one element until we're successful.
-		// Move up the stack as we hit the end of each page in our stack.
-		var i int
+
+		// 尝试跨到下个元素直到成功，这里的用“跨到”，
+		// 是因为如果当前游标指向的元素在页的结尾，就要到兄弟页去找下一个元素了
+		// 如果不是结尾，直接就是下一个元素即可了
+		// 由于要跨到，所以栈要向栈底遍历才行
+		var i int // i表示在哪一层
 		for i = len(c.stack) - 1; i >= 0; i-- {
 			elem := &c.stack[i]
-			if elem.index < elem.count()-1 {
-				elem.index++
+			if elem.index < elem.count()-1 { // 如果当前元素不是最后，
+				elem.index++  // 指向下个位置
 				break
 			}
 		}
 
-		// If we've hit the root page then stop and return. This will leave the
-		// cursor on the last element of the last page.
+		// 到达了根页，表示经过上面的查找还是找不到下一个的位置，那就返回
+		// 这时候游标指向最后一个页的最后一个元素
 		if i == -1 {
 			return nil, nil, 0
 		}
 
-		// Otherwise start from where we left off in the stack and find the
-		// first element of the first leaf page.
+		// 更新栈顶为当前层，查找栈顶页的第一个元素（这里好好体会）
 		c.stack = c.stack[:i+1]
-		c.first()
+		c.first() // 这里调用这个函数，是因为如果你跨到兄弟页，那是不是找兄弟页的第一个元素就可以了吧
 
-		// If this is an empty page then restart and move back up the stack.
+		// 如果遇到空页，则重新来过，详情情况请看下面issue
 		// https://github.com/boltdb/bolt/issues/450
 		if c.stack[len(c.stack)-1].count() == 0 {
 			continue
@@ -270,8 +272,9 @@ func (c *Cursor) search(key []byte, pgid pgid) {
 	c.searchPage(key, p)
 }
 
-// 节点搜索
+// 节点搜索（分支搜索）
 func (c *Cursor) searchNode(key []byte, n *node) {
+	// 二分搜索
 	var exact bool
 	index := sort.Search(len(n.inodes), func(i int) bool {
 		ret := bytes.Compare(n.inodes[i].key, key)
@@ -280,8 +283,12 @@ func (c *Cursor) searchNode(key []byte, n *node) {
 		}
 		return ret != -1
 	})
+	// 如果找不到准确匹配的键，索引index会返回下一个元素的位置，
+	// 现在在分支节点，则要减一
+	// 例如 1，5，9，这几个键，我要查8，
+	// 这时候index在 sort.Search函数返回时是在9这个位置，所以要减1，才能在[5,9)这个区间找
 	if !exact && index > 0 {
-		index--
+		index-- 
 	}
 	c.stack[len(c.stack)-1].index = index
 
@@ -289,9 +296,9 @@ func (c *Cursor) searchNode(key []byte, n *node) {
 	c.search(key, n.inodes[index].pgid)
 }
 
-// 页中搜索
+// 页中搜索（分支搜索）
 func (c *Cursor) searchPage(key []byte, p *page) {
-	// Binary search for the correct range.
+	// 二分搜索
 	inodes := p.branchPageElements()
 
 	var exact bool
@@ -302,8 +309,10 @@ func (c *Cursor) searchPage(key []byte, p *page) {
 		}
 		return ret != -1
 	})
+	// 如果找不到准确匹配的键，索引index会返回下一个元素的位置，
+	// 现在在分支节点，则要减一
 	if !exact && index > 0 {
-		index--
+		index-- 
 	}
 	c.stack[len(c.stack)-1].index = index
 
@@ -316,7 +325,7 @@ func (c *Cursor) nsearch(key []byte) {
 	e := &c.stack[len(c.stack)-1]
 	p, n := e.page, e.node
 
-	// 如果节点有就查找inode
+	// 如果有节点就查找inode
 	if n != nil {
 		index := sort.Search(len(n.inodes), func(i int) bool {
 			return bytes.Compare(n.inodes[i].key, key) != -1
@@ -325,7 +334,7 @@ func (c *Cursor) nsearch(key []byte) {
 		return
 	}
 
-	// 如果页有（肯定有），则查找叶子元素
+	// 如果有页（肯定有），则查找叶子元素
 	inodes := p.leafPageElements()
 	index := sort.Search(int(p.count), func(i int) bool {
 		return bytes.Compare(inodes[i].key(), key) != -1
@@ -377,7 +386,7 @@ func (c *Cursor) node() *node {
 type elemRef struct {
 	page  *page
 	node  *node
-	index int
+	index int // 索引
 }
 
 // 返回页或节点是否为叶子

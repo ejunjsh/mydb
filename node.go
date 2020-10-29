@@ -7,7 +7,7 @@ import (
 	"unsafe"
 )
 
-// 节点表示一个存在内存中的对页（page）反序列化后的数据结构
+// node(节点)表示一个存在内存中的对页（page）反序列化后的数据结构
 type node struct {
 	bucket     *Bucket // 关联的桶
 	isLeaf     bool // 是否叶子
