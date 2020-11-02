@@ -13,70 +13,70 @@ import (
 // 表示一个内部事务的标识
 type txid uint64
 
-// Tx represents a read-only or read/write transaction on the database.
-// Read-only transactions can be used for retrieving values for keys and creating cursors.
-// Read/write transactions can create and remove buckets and create and remove keys.
+// Tx 表示一个在数据库里的只读或者读写事务
+// 只读事务只用来通过键获取值和创建游标
+// 读写事务用来创建和删除桶，还有创建和删除键
 //
-// IMPORTANT: You must commit or rollback transactions when you are done with
-// them. Pages can not be reclaimed by the writer until no more transactions
-// are using them. A long running read transaction can cause the database to
-// quickly grow.
+// 重要：如果你用完了事务，你必须提交或回滚事务
+// 否则页不能被回收，那就不能被读写事务去申请
+// 一个长时间的读事务可能造成数据库大小很快的变大
 type Tx struct {
-	writable       bool
+	writable       bool //标志是否为一个读写事务
 	managed        bool
-	db             *DB
-	meta           *meta
-	root           Bucket
-	pages          map[pgid]*page
-	stats          TxStats
-	commitHandlers []func()
+	db             *DB  // 关联的数据库
+	meta           *meta // 关联的元数据
+	root           Bucket // 关联的桶
+	pages          map[pgid]*page // 页id的一个映射，用来在读写事务中保存脏页（即需要写回到磁盘的页）
+	stats          TxStats // 事务相关统计数据
+	commitHandlers []func() // 提交事务的回调函数
 
-	// WriteFlag specifies the flag for write-related methods like WriteTo().
-	// Tx opens the database file with the specified flag to copy the data.
+	// 这个标志是专门给写相关方法用的，例如WriteTo()
+	// 设置这个标志，事务就用指定的标志位（syscall.O_DIRECT）来打开数据库文件来拷贝数据
 	//
-	// By default, the flag is unset, which works well for mostly in-memory
-	// workloads. For databases that are much larger than available RAM,
-	// set the flag to syscall.O_DIRECT to avoid trashing the page cache.
+	// 默认这个标志是不设值的，因为没有这个标志已经满足大部分情况了
+	// 但是如果数据库文件很大，大过可用内存的时候，要读出整个数据库的话，
+	// 设置这个标志，那就可以利用syscall.O_DIRECT来避免损坏页高速缓存
 	WriteFlag int
 }
 
-// init initializes the transaction.
+// init 初始化事务
 func (tx *Tx) init(db *DB) {
 	tx.db = db
 	tx.pages = nil
 
-	// Copy the meta page since it can be changed by the writer.
+	// 从元数据页拷贝一个元数据来初始化事务，
+	// 这样读写事务可以改变这个拷贝出来的元数据而不会污染原来的（写时复制）
 	tx.meta = &meta{}
 	db.meta().copy(tx.meta)
 
-	// Copy over the root bucket.
+	// 从元数据拷贝根桶进来
 	tx.root = newBucket(tx)
 	tx.root.bucket = &bucket{}
 	*tx.root.bucket = tx.meta.root
 
-	// Increment the transaction id and add a page cache for writable transactions.
+	// 如果是读写事务，则要累加事务和初始化脏页映射
 	if tx.writable {
 		tx.pages = make(map[pgid]*page)
 		tx.meta.txid += txid(1)
 	}
 }
 
-// ID returns the transaction id.
+// 返回事务标识
 func (tx *Tx) ID() int {
 	return int(tx.meta.txid)
 }
 
-// DB returns a reference to the database that created the transaction.
+// 返回一个创建当前事务的数据库引用
 func (tx *Tx) DB() *DB {
 	return tx.db
 }
 
-// Size returns current database size in bytes as seen by this transaction.
+// 返回当前事务下的数据库大小（字节）
 func (tx *Tx) Size() int64 {
 	return int64(tx.meta.pgid) * int64(tx.db.pageSize)
 }
 
-// Writable returns whether the transaction can perform write operations.
+// 返回事务是否可以执行写操作
 func (tx *Tx) Writable() bool {
 	return tx.writable
 }
