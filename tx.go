@@ -25,7 +25,7 @@ type Tx struct {
 	managed        bool
 	db             *DB  // 关联的数据库
 	meta           *meta // 关联的元数据
-	root           Bucket // 关联的桶
+	root           Bucket // 关联的根桶
 	pages          map[pgid]*page // 页id的一个映射，用来在读写事务中保存脏页（即需要写回到磁盘的页）
 	stats          TxStats // 事务相关统计数据
 	commitHandlers []func() // 提交事务的回调函数
@@ -81,15 +81,16 @@ func (tx *Tx) Writable() bool {
 	return tx.writable
 }
 
-// Cursor creates a cursor associated with the root bucket.
-// All items in the cursor will return a nil value because all root bucket keys point to buckets.
-// The cursor is only valid as long as the transaction is open.
-// Do not use a cursor after the transaction is closed.
+
+// 创建一个跟根桶关联的游标
+// 游标返回的只有键，值是nil，因为根桶的键都是指向桶
+// 游标只在事务打开的时候有效
+// 事务关闭后不要使用游标了
 func (tx *Tx) Cursor() *Cursor {
 	return tx.root.Cursor()
 }
 
-// Stats retrieves a copy of the current transaction statistics.
+// 返回当前事务统计数据的一个拷贝
 func (tx *Tx) Stats() TxStats {
 	return tx.stats
 }

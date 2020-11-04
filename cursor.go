@@ -161,7 +161,7 @@ func (c *Cursor) seek(seek []byte) (key []byte, value []byte, flags uint32) {
 		return nil, nil, 0
 	}
 
-	// 如果桶页，则会返回nil值
+	// 返回当前游标指向的键值
 	return c.keyValue()
 }
 
