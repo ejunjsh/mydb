@@ -95,29 +95,29 @@ func (tx *Tx) Stats() TxStats {
 	return tx.stats
 }
 
-// Bucket retrieves a bucket by name.
-// Returns nil if the bucket does not exist.
-// The bucket instance is only valid for the lifetime of the transaction.
+// 通过名字返回桶
+// 如果桶不存在返回nil
+// 桶实例只在当前事务有效
 func (tx *Tx) Bucket(name []byte) *Bucket {
 	return tx.root.Bucket(name)
 }
 
-// CreateBucket creates a new bucket.
-// Returns an error if the bucket already exists, if the bucket name is blank, or if the bucket name is too long.
-// The bucket instance is only valid for the lifetime of the transaction.
+// 创建一个新桶
+// 如果一个桶存在，桶名为空或者太长，就返回错误
+// 桶实例只在当前事务有效
 func (tx *Tx) CreateBucket(name []byte) (*Bucket, error) {
 	return tx.root.CreateBucket(name)
 }
 
-// CreateBucketIfNotExists creates a new bucket if it doesn't already exist.
-// Returns an error if the bucket name is blank, or if the bucket name is too long.
-// The bucket instance is only valid for the lifetime of the transaction.
+// 如果桶不存在就创建一个新桶
+// 如果桶名为空或者太长，就返回错误
+// 桶实例只在当前事务有效
 func (tx *Tx) CreateBucketIfNotExists(name []byte) (*Bucket, error) {
 	return tx.root.CreateBucketIfNotExists(name)
 }
 
-// DeleteBucket deletes a bucket.
-// Returns an error if the bucket cannot be found or if the key represents a non-bucket value.
+// 删除一个桶
+// 如果桶不存在或者根据桶名搜索这个桶时返回的不是一个桶该返回的值时报错
 func (tx *Tx) DeleteBucket(name []byte) error {
 	return tx.root.DeleteBucket(name)
 }
@@ -454,26 +454,26 @@ func (tx *Tx) checkBucket(b *Bucket, reachable map[pgid]*page, freed map[pgid]bo
 	})
 }
 
-// allocate returns a contiguous block of memory starting at a given page.
+// 分配一个连续块的内存，并返回以该内存开始的页
 func (tx *Tx) allocate(count int) (*page, error) {
 	p, err := tx.db.allocate(count)
 	if err != nil {
 		return nil, err
 	}
 
-	// Save to our page cache.
+	// 保存到脏页映射表里
 	tx.pages[p.id] = p
 
-	// Update statistics.
+	// 更新统计数据
 	tx.stats.PageCount++
 	tx.stats.PageAlloc += count * tx.db.pageSize
 
 	return p, nil
 }
 
-// write writes any dirty pages to disk.
+// 写脏页到硬盘里
 func (tx *Tx) write() error {
-	// Sort pages by id.
+	// 根据id排序页
 	pages := make(pages, 0, len(tx.pages))
 	for _, p := range tx.pages {
 		pages = append(pages, p)
