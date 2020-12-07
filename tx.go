@@ -123,6 +123,7 @@ func (tx *Tx) DeleteBucket(name []byte) error {
 }
 
 // ForEach executes a function for each bucket in the root.
+// 循环在根上的所有桶执行一个函数
 // If the provided function returns an error then the iteration is stopped and
 // the error is returned to the caller.
 func (tx *Tx) ForEach(fn func(name []byte, b *Bucket) error) error {
@@ -479,6 +480,7 @@ func (tx *Tx) write() error {
 		pages = append(pages, p)
 	}
 	// Clear out page cache early.
+	// 清空
 	tx.pages = make(map[pgid]*page)
 	sort.Sort(pages)
 
