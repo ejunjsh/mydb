@@ -102,30 +102,28 @@ func (tx *Tx) Bucket(name []byte) *Bucket {
 	return tx.root.Bucket(name)
 }
 
-// 创建一个新桶
+// CreateBucket 创建一个新桶
 // 如果一个桶存在，桶名为空或者太长，就返回错误
 // 桶实例只在当前事务有效
 func (tx *Tx) CreateBucket(name []byte) (*Bucket, error) {
 	return tx.root.CreateBucket(name)
 }
 
-// 如果桶不存在就创建一个新桶
+// CreateBucketIfNotExists 如果桶不存在就创建一个新桶
 // 如果桶名为空或者太长，就返回错误
 // 桶实例只在当前事务有效
 func (tx *Tx) CreateBucketIfNotExists(name []byte) (*Bucket, error) {
 	return tx.root.CreateBucketIfNotExists(name)
 }
 
-// 删除一个桶
+// DeleteBucket 删除一个桶
 // 如果桶不存在或者根据桶名搜索这个桶时返回的不是一个桶该返回的值时报错
 func (tx *Tx) DeleteBucket(name []byte) error {
 	return tx.root.DeleteBucket(name)
 }
 
-// ForEach executes a function for each bucket in the root.
-// 循环在根上的所有桶执行一个函数
-// If the provided function returns an error then the iteration is stopped and
-// the error is returned to the caller.
+// ForEach 循环在根上的所有桶执行一个函数
+// 如果函数返回错误，则循环停止，并返回该错误给调用者
 func (tx *Tx) ForEach(fn func(name []byte, b *Bucket) error) error {
 	return tx.root.ForEach(func(k, v []byte) error {
 		if err := fn(k, tx.root.Bucket(k)); err != nil {
@@ -135,14 +133,13 @@ func (tx *Tx) ForEach(fn func(name []byte, b *Bucket) error) error {
 	})
 }
 
-// OnCommit adds a handler function to be executed after the transaction successfully commits.
+// OnCommit 加一个回调函数，这个回调函数会在事务成功提交时执行
 func (tx *Tx) OnCommit(fn func()) {
 	tx.commitHandlers = append(tx.commitHandlers, fn)
 }
 
-// Commit writes all changes to disk and updates the meta page.
-// Returns an error if a disk write error occurs, or if Commit is
-// called on a read-only transaction.
+// Commit 在写事务到时候用来写所有改动到磁盘并更新meta页，如果写入磁盘时发生错误，就返回错误
+// Commit 也用来在只读事务中调用
 func (tx *Tx) Commit() error {
 	_assert(!tx.managed, "managed tx commit not allowed")
 	if tx.db == nil {
@@ -151,16 +148,15 @@ func (tx *Tx) Commit() error {
 		return ErrTxNotWritable
 	}
 
-	// TODO(benbjohnson): Use vectorized I/O to write out dirty pages.
 
-	// Rebalance nodes which have had deletions.
+	// 重新平衡，因为有些节点有可能被删除了
 	var startTime = time.Now()
 	tx.root.rebalance()
 	if tx.stats.Rebalance > 0 {
 		tx.stats.RebalanceTime += time.Since(startTime)
 	}
 
-	// spill data onto dirty pages.
+	// 溢出数据到脏页
 	startTime = time.Now()
 	if err := tx.root.spill(); err != nil {
 		tx.rollback()
@@ -168,13 +164,12 @@ func (tx *Tx) Commit() error {
 	}
 	tx.stats.SpillTime += time.Since(startTime)
 
-	// Free the old root bucket.
+	// 释放旧的根桶
 	tx.meta.root.root = tx.root.root
 
 	opgid := tx.meta.pgid
 
-	// Free the freelist and allocate new pages for it. This will overestimate
-	// the size of the freelist but not underestimate the size (which would be bad).
+	// 释放空闲列表并分配一个新页给他
 	tx.db.freelist.free(tx.meta.txid, tx.db.page(tx.meta.freelist))
 	p, err := tx.allocate((tx.db.freelist.size() / tx.db.pageSize) + 1)
 	if err != nil {
@@ -187,7 +182,7 @@ func (tx *Tx) Commit() error {
 	}
 	tx.meta.freelist = p.id
 
-	// If the high water mark has moved up then attempt to grow the database.
+	// 如果高水位已经上升，就扩大数据库
 	if tx.meta.pgid > opgid {
 		if err := tx.db.grow(int(tx.meta.pgid+1) * tx.db.pageSize); err != nil {
 			tx.rollback()
@@ -195,15 +190,15 @@ func (tx *Tx) Commit() error {
 		}
 	}
 
-	// Write dirty pages to disk.
+	// 写脏页到磁盘
 	startTime = time.Now()
 	if err := tx.write(); err != nil {
 		tx.rollback()
 		return err
 	}
 
-	// If strict mode is enabled then perform a consistency check.
-	// Only the first consistency error is reported in the panic.
+	// 如果严格模式启用，则会触发一次一致性检查
+	// 发现错误并报Panic
 	if tx.db.StrictMode {
 		ch := tx.Check()
 		var errs []string
@@ -219,17 +214,17 @@ func (tx *Tx) Commit() error {
 		}
 	}
 
-	// Write meta to disk.
+	// 写meta到磁盘
 	if err := tx.writeMeta(); err != nil {
 		tx.rollback()
 		return err
 	}
 	tx.stats.WriteTime += time.Since(startTime)
 
-	// Finalize the transaction.
+	// 关闭事务
 	tx.close()
 
-	// Execute commit handlers now that the locks have been removed.
+	// 执行提交的回调函数
 	for _, fn := range tx.commitHandlers {
 		fn()
 	}
@@ -237,8 +232,8 @@ func (tx *Tx) Commit() error {
 	return nil
 }
 
-// Rollback closes the transaction and ignores all previous updates. Read-only
-// transactions must be rolled back and not committed.
+// Rollback 关闭事务并忽略所有之前的改动，
+// 只读事务必须回滚和没有提交
 func (tx *Tx) Rollback() error {
 	_assert(!tx.managed, "managed tx rollback not allowed")
 	if tx.db == nil {
@@ -253,12 +248,13 @@ func (tx *Tx) rollback() {
 		return
 	}
 	if tx.writable {
-		tx.db.freelist.rollback(tx.meta.txid)
-		tx.db.freelist.reload(tx.db.page(tx.db.meta().freelist))
+		tx.db.freelist.rollback(tx.meta.txid) // 回滚之前的改动
+		tx.db.freelist.reload(tx.db.page(tx.db.meta().freelist)) // 重新加载
 	}
 	tx.close()
 }
 
+// close 关闭事务
 func (tx *Tx) close() {
 	if tx.db == nil {
 		return
@@ -285,7 +281,7 @@ func (tx *Tx) close() {
 		tx.db.removeTx(tx)
 	}
 
-	// Clear all references.
+	// 清空所有引用
 	tx.db = nil
 	tx.meta = nil
 	tx.root = Bucket{tx: tx}
