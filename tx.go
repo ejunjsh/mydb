@@ -61,28 +61,28 @@ func (tx *Tx) init(db *DB) {
 	}
 }
 
-// 返回事务标识
+// ID 返回事务标识
 func (tx *Tx) ID() int {
 	return int(tx.meta.txid)
 }
 
-// 返回一个创建当前事务的数据库引用
+// DB 返回一个创建当前事务的数据库引用
 func (tx *Tx) DB() *DB {
 	return tx.db
 }
 
-// 返回当前事务下的数据库大小（字节）
+// Size 返回当前事务下的数据库大小（字节）
 func (tx *Tx) Size() int64 {
 	return int64(tx.meta.pgid) * int64(tx.db.pageSize)
 }
 
-// 返回事务是否可以执行写操作
+// Writable 返回事务是否可以执行写操作
 func (tx *Tx) Writable() bool {
 	return tx.writable
 }
 
 
-// 创建一个跟根桶关联的游标
+// Cursor 创建一个跟根桶关联的游标
 // 游标返回的只有键，值是nil，因为根桶的键都是指向桶
 // 游标只在事务打开的时候有效
 // 事务关闭后不要使用游标了
@@ -90,12 +90,12 @@ func (tx *Tx) Cursor() *Cursor {
 	return tx.root.Cursor()
 }
 
-// 返回当前事务统计数据的一个拷贝
+// Stats 返回当前事务统计数据的一个拷贝
 func (tx *Tx) Stats() TxStats {
 	return tx.stats
 }
 
-// 通过名字返回桶
+// Bucket 通过名字返回桶
 // 如果桶不存在返回nil
 // 桶实例只在当前事务有效
 func (tx *Tx) Bucket(name []byte) *Bucket {
@@ -260,16 +260,16 @@ func (tx *Tx) close() {
 		return
 	}
 	if tx.writable {
-		// Grab freelist stats.
+		// 获取空闲列表统计数据
 		var freelistFreeN = tx.db.freelist.free_count()
 		var freelistPendingN = tx.db.freelist.pending_count()
 		var freelistAlloc = tx.db.freelist.size()
 
-		// Remove transaction ref & writer lock.
+		// 移除事务引用和写锁
 		tx.db.rwtx = nil
 		tx.db.rwlock.Unlock()
 
-		// Merge statistics.
+		// 合并统计数据
 		tx.db.statlock.Lock()
 		tx.db.stats.FreePageN = freelistFreeN
 		tx.db.stats.PendingPageN = freelistPendingN
@@ -288,32 +288,32 @@ func (tx *Tx) close() {
 	tx.pages = nil
 }
 
-// Copy writes the entire database to a writer.
-// This function exists for backwards compatibility.
+// Copy 写完整的数据库到一个Writer
+// 这个函数存在是为了向后兼容
 //
-// Deprecated; Use WriteTo() instead.
+//  废弃；请用WriteTo()代替
 func (tx *Tx) Copy(w io.Writer) error {
 	_, err := tx.WriteTo(w)
 	return err
 }
 
-// WriteTo writes the entire database to a writer.
-// If err == nil then exactly tx.Size() bytes will be written into the writer.
+// WriteTo 写完整的数据库到一个Writer
+// 如果 err == nil 则写入 tx.Size() 字节到 writer.
 func (tx *Tx) WriteTo(w io.Writer) (n int64, err error) {
-	// Attempt to open reader with WriteFlag
+	// 尝试用写标志打开文件（reader）
 	f, err := os.OpenFile(tx.db.path, os.O_RDONLY|tx.WriteFlag, 0)
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = f.Close() }()
 
-	// Generate a meta page. We use the same page data for both meta pages.
+	// 生成一个meta页，用这个页的数据来写两个meta页到writer
 	buf := make([]byte, tx.db.pageSize)
 	page := (*page)(unsafe.Pointer(&buf[0]))
 	page.flags = metaPageFlag
 	*page.meta() = *tx.meta
 
-	// Write meta 0.
+	// 写 meta 0.
 	page.id = 0
 	page.meta().checksum = page.meta().sum64()
 	nn, err := w.Write(buf)
@@ -322,7 +322,7 @@ func (tx *Tx) WriteTo(w io.Writer) (n int64, err error) {
 		return n, fmt.Errorf("meta 0 copy: %s", err)
 	}
 
-	// Write meta 1 with a lower transaction id.
+	// 用更低的事务来写 meta 1 
 	page.id = 1
 	page.meta().txid -= 1
 	page.meta().checksum = page.meta().sum64()
@@ -332,12 +332,12 @@ func (tx *Tx) WriteTo(w io.Writer) (n int64, err error) {
 		return n, fmt.Errorf("meta 1 copy: %s", err)
 	}
 
-	// Move past the meta pages in the file.
+	// 在文件上跳过两个meta页的位置
 	if _, err := f.Seek(int64(tx.db.pageSize*2), os.SEEK_SET); err != nil {
 		return n, fmt.Errorf("seek: %s", err)
 	}
 
-	// Copy data pages.
+	// 拷贝数据页
 	wn, err := io.CopyN(w, f, tx.Size()-int64(tx.db.pageSize*2))
 	n += wn
 	if err != nil {
@@ -347,9 +347,8 @@ func (tx *Tx) WriteTo(w io.Writer) (n int64, err error) {
 	return n, f.Close()
 }
 
-// CopyFile copies the entire database to file at the given path.
-// A reader transaction is maintained during the copy so it is safe to continue
-// using the database while a copy is in progress.
+// CopyFile 拷贝完整的数据库到指定路径下到文件
+// 一个可读的事务用来拷贝可以使得在拷贝过程中安全的被其他事务使用数据库而不受影响
 func (tx *Tx) CopyFile(path string, mode os.FileMode) error {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
