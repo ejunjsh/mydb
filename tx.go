@@ -363,8 +363,8 @@ func (tx *Tx) CopyFile(path string, mode os.FileMode) error {
 	return f.Close()
 }
 
-// Check performs several consistency checks on the database for this transaction.
-// An error is returned if any inconsistency is found.
+// Check 为这个事务在数据库上执行一堆一致性检查
+// 如果找到不一致的，就返回一个错误
 //
 // It can be safely run concurrently on a writable transaction. However, this
 // incurs a high cost for large databases and databases with a lot of subbuckets
@@ -378,7 +378,7 @@ func (tx *Tx) Check() <-chan error {
 }
 
 func (tx *Tx) check(ch chan error) {
-	// Check if any pages are double freed.
+	// 检查是否页被重复释放
 	freed := make(map[pgid]bool)
 	all := make([]pgid, tx.db.freelist.count())
 	tx.db.freelist.copyall(all)
@@ -389,7 +389,7 @@ func (tx *Tx) check(ch chan error) {
 		freed[id] = true
 	}
 
-	// Track every reachable page.
+	// 跟踪每个可达的页
 	reachable := make(map[pgid]*page)
 	reachable[0] = tx.page(0) // meta0
 	reachable[1] = tx.page(1) // meta1
@@ -397,10 +397,10 @@ func (tx *Tx) check(ch chan error) {
 		reachable[tx.meta.freelist+pgid(i)] = tx.page(tx.meta.freelist)
 	}
 
-	// Recursively check buckets.
+	// 递归检查桶
 	tx.checkBucket(&tx.root, reachable, freed, ch)
 
-	// Ensure all pages below high water mark are either reachable or freed.
+	// 保证低于高水位的页都是可达或者释放的了
 	for i := pgid(0); i < tx.meta.pgid; i++ {
 		_, isReachable := reachable[i]
 		if !isReachable && !freed[i] {
@@ -408,23 +408,25 @@ func (tx *Tx) check(ch chan error) {
 		}
 	}
 
-	// Close the channel to signal completion.
+	// 关闭管道用来通知完成了
 	close(ch)
 }
 
 func (tx *Tx) checkBucket(b *Bucket, reachable map[pgid]*page, freed map[pgid]bool, ch chan error) {
-	// Ignore inline buckets.
+
+	// 忽略内联桶
 	if b.root == 0 {
 		return
 	}
 
-	// Check every page used by this bucket.
+
+	// 检查这个桶里用过的页
 	b.tx.forEachPage(b.root, 0, func(p *page, _ int) {
 		if p.id > tx.meta.pgid {
 			ch <- fmt.Errorf("page %d: out of bounds: %d", int(p.id), int(b.tx.meta.pgid))
 		}
 
-		// Ensure each page is only referenced once.
+		// 保证每个页只被引用一次
 		for i := pgid(0); i <= pgid(p.overflow); i++ {
 			var id = p.id + i
 			if _, ok := reachable[id]; ok {
@@ -433,7 +435,7 @@ func (tx *Tx) checkBucket(b *Bucket, reachable map[pgid]*page, freed map[pgid]bo
 			reachable[id] = p
 		}
 
-		// We should only encounter un-freed leaf and branch pages.
+		// 只会遇到没有被释放的叶子和分支页
 		if freed[p.id] {
 			ch <- fmt.Errorf("page %d: reachable freed", int(p.id))
 		} else if (p.flags&branchPageFlag) == 0 && (p.flags&leafPageFlag) == 0 {
@@ -441,7 +443,7 @@ func (tx *Tx) checkBucket(b *Bucket, reachable map[pgid]*page, freed map[pgid]bo
 		}
 	})
 
-	// Check each bucket within this bucket.
+	// 检查这个桶下的每个桶
 	_ = b.ForEach(func(k, v []byte) error {
 		if child := b.Bucket(k); child != nil {
 			tx.checkBucket(child, reachable, freed, ch)
@@ -474,64 +476,64 @@ func (tx *Tx) write() error {
 	for _, p := range tx.pages {
 		pages = append(pages, p)
 	}
-	// Clear out page cache early.
-	// 清空
+	// 提前清空页缓存
 	tx.pages = make(map[pgid]*page)
 	sort.Sort(pages)
 
-	// Write pages to disk in order.
+	// 按顺序把页写入磁盘
 	for _, p := range pages {
 		size := (int(p.overflow) + 1) * tx.db.pageSize
 		offset := int64(p.id) * int64(tx.db.pageSize)
 
-		// Write out page in "max allocation" sized chunks.
+		// 按照“最大分配”的大小的块写入磁盘
 		ptr := (*[maxAllocSize]byte)(unsafe.Pointer(p))
 		for {
-			// Limit our write to our max allocation size.
+			// 限制一次写入只能是“最大分配”的大小的块
 			sz := size
 			if sz > maxAllocSize-1 {
 				sz = maxAllocSize - 1
 			}
 
-			// Write chunk to disk.
+			// 写块到磁盘
 			buf := ptr[:sz]
 			if _, err := tx.db.ops.writeAt(buf, offset); err != nil {
 				return err
 			}
 
-			// Update statistics.
+			// 更新统计数据
 			tx.stats.Write++
 
-			// Exit inner for loop if we've written all the chunks.
+			// 如果写完所有块则退出里循环
 			size -= sz
 			if size == 0 {
 				break
 			}
 
-			// Otherwise move offset forward and move pointer to next chunk.
+			// 否则移动位移和指针到下一个块
 			offset += int64(sz)
 			ptr = (*[maxAllocSize]byte)(unsafe.Pointer(&ptr[sz]))
 		}
 	}
 
-	// Ignore file sync if flag is set on DB.
+	// 如果标记有设置则忽略文件同步
 	if !tx.db.NoSync || IgnoreNoSync {
 		if err := fdatasync(tx.db); err != nil {
 			return err
 		}
 	}
 
-	// Put small pages back to page pool.
+	// 把小页放回到页池子
 	for _, p := range pages {
-		// Ignore page sizes over 1 page.
-		// These are allocated using make() instead of the page pool.
+
+		/// 忽略那些大于一个页的页
+		// 因为这些是由make()分配而不是由页池分配
 		if int(p.overflow) != 0 {
 			continue
 		}
 
 		buf := (*[maxAllocSize]byte)(unsafe.Pointer(p))[:tx.db.pageSize]
 
-		// See https://go.googlesource.com/go/+/f03c9202c43e0abb130669852082117ca50aa9b1
+		// 看 https://go.googlesource.com/go/+/f03c9202c43e0abb130669852082117ca50aa9b1
 		for i := range buf {
 			buf[i] = 0
 		}
@@ -541,14 +543,14 @@ func (tx *Tx) write() error {
 	return nil
 }
 
-// writeMeta writes the meta to the disk.
+// writeMeta 写meta到磁盘
 func (tx *Tx) writeMeta() error {
-	// Create a temporary buffer for the meta page.
+	// 创建一个临时的buffer给meta页
 	buf := make([]byte, tx.db.pageSize)
 	p := tx.db.pageInBuffer(buf, 0)
 	tx.meta.write(p)
 
-	// Write the meta page to file.
+	// 写meta页到文件
 	if _, err := tx.db.ops.writeAt(buf, int64(p.id)*int64(tx.db.pageSize)); err != nil {
 		return err
 	}
@@ -558,13 +560,13 @@ func (tx *Tx) writeMeta() error {
 		}
 	}
 
-	// Update statistics.
+	// 更新统计数据
 	tx.stats.Write++
 
 	return nil
 }
 
-// page returns a reference to the page with a given id.
+// page 根据id返回一个页到引用
 // If page has been written to then a temporary buffered page is returned.
 func (tx *Tx) page(id pgid) *page {
 	// Check the dirty pages first.
@@ -574,18 +576,18 @@ func (tx *Tx) page(id pgid) *page {
 		}
 	}
 
-	// Otherwise return directly from the mmap.
+	// 否则从mmap（内存映射）直接返回
 	return tx.db.page(id)
 }
 
-// forEachPage iterates over every page within a given page and executes a function.
+// forEachPage 遍历每个页并对这个页执行一个函数
 func (tx *Tx) forEachPage(pgid pgid, depth int, fn func(*page, int)) {
 	p := tx.page(pgid)
 
-	// Execute function.
+	// 执行函数
 	fn(p, depth)
 
-	// Recursively loop over children.
+	// 递归遍历孩子
 	if (p.flags & branchPageFlag) != 0 {
 		for i := 0; i < int(p.count); i++ {
 			elem := p.branchPageElement(uint16(i))
@@ -594,8 +596,8 @@ func (tx *Tx) forEachPage(pgid pgid, depth int, fn func(*page, int)) {
 	}
 }
 
-// Page returns page information for a given page number.
-// This is only safe for concurrent use when used by a writable transaction.
+// Page 通过页ID，返回一个页信息
+// 在并发环境下，这是唯一安全的使用写事务的方法
 func (tx *Tx) Page(id int) (*PageInfo, error) {
 	if tx.db == nil {
 		return nil, ErrTxClosed
@@ -603,7 +605,7 @@ func (tx *Tx) Page(id int) (*PageInfo, error) {
 		return nil, nil
 	}
 
-	// Build the page info.
+	// 创建页信息结构
 	p := tx.db.page(pgid(id))
 	info := &PageInfo{
 		ID:            id,
@@ -611,7 +613,7 @@ func (tx *Tx) Page(id int) (*PageInfo, error) {
 		OverflowCount: int(p.overflow),
 	}
 
-	// Determine the type (or if it's free).
+	// 决定类型（是否释放）
 	if tx.db.freelist.freed(pgid(id)) {
 		info.Type = "free"
 	} else {
@@ -621,7 +623,7 @@ func (tx *Tx) Page(id int) (*PageInfo, error) {
 	return info, nil
 }
 
-// TxStats represents statistics about the actions performed by the transaction.
+// TxStats 代表这个事务执行的动作的统计数据
 type TxStats struct {
 	// Page statistics.
 	PageCount int // number of page allocations
