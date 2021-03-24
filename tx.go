@@ -567,9 +567,9 @@ func (tx *Tx) writeMeta() error {
 }
 
 // page 根据id返回一个页到引用
-// If page has been written to then a temporary buffered page is returned.
+// 如果页已经脏，则在脏页缓存里面返回
 func (tx *Tx) page(id pgid) *page {
-	// Check the dirty pages first.
+	// 检查是否为脏页
 	if tx.pages != nil {
 		if p, ok := tx.pages[id]; ok {
 			return p
