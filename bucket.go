@@ -28,8 +28,8 @@ const (
 	maxFillPercent = 1.0
 )
 
-// DefaultFillPercent is the percentage that split pages are filled.
-// This value can be changed by setting Bucket.FillPercent.
+// DefaultFillPercent 默认拆分一个页的百分比阀值，
+// 这个可以通过Bucket.FillPercent来修改
 const DefaultFillPercent = 0.5
 
 // Bucket 代表一个在数据库对键值对集合。
@@ -41,11 +41,9 @@ type Bucket struct {
 	rootNode *node              // 根页的具体化（materialized）节点
 	nodes    map[pgid]*node     // 节点缓存
 
-	// Sets the threshold for filling nodes when they split. By default,
-	// the bucket will fill to 50% but it can be useful to increase this
-	// amount if you know that your write workloads are mostly append-only.
-	//
-	// This is non-persisted across transactions so it must be set in every Tx.
+	// 这个值不会保存进磁盘，所以必须每个事务都要设置
+	// 默认情况下页里面装到50%的数据时就会拆分，但是如果你大部分的写都是后面插入（append-only）的话，
+	// 增加这个值大小非常有用
 	FillPercent float64
 }
 
@@ -388,6 +386,7 @@ func (b *Bucket) ForEach(fn func(k, v []byte) error) error {
 }
 
 // Stat 返回桶的统计数据
+// （统计相关就不翻译了）
 func (b *Bucket) Stats() BucketStats {
 	var s, subStats BucketStats
 	pageSize := b.tx.db.pageSize
@@ -717,6 +716,7 @@ func (b *Bucket) pageNode(id pgid) (*page, *node) {
 }
 
 // BucketStats records statistics about resources used by a bucket.
+// (统计相关不翻译了)
 type BucketStats struct {
 	// Page count statistics.
 	BranchPageN     int // number of logical branch pages
